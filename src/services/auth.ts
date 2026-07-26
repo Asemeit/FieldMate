@@ -92,7 +92,8 @@ class AuthService {
     }
 
     for (const user of keepByEmail.values()) {
-      const role = resolveUserRole(user.email);
+      const emailRole = resolveUserRole(user.email);
+      const role = emailRole === 'admin' ? 'admin' : user.role ?? 'farmer';
       const updated: StoredUser = { ...user, role };
       await dbService.saveUser(updated);
     }
@@ -319,6 +320,38 @@ class AuthService {
   public async listUsers(): Promise<StoredUser[]> {
     const users = await dbService.getAllUsers();
     return users.sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** Admin: update farmer name / county. Cannot change admin email identity. */
+  public async adminUpdateUser(
+    email: string,
+    updates: { name?: string; county?: string }
+  ): Promise<StoredUser> {
+    return this.updateProfile(email, updates);
+  }
+
+  /** Admin: set a new password for any account. */
+  public async adminSetPassword(email: string, newPassword: string): Promise<void> {
+    await this.resetPassword(email, newPassword);
+  }
+
+  /** Admin: permanently remove an account. Blocks deleting the signed-in admin. */
+  public async adminDeleteUser(email: string, actingAdminEmail: string): Promise<void> {
+    const normalized = normalizeEmail(email);
+    const acting = normalizeEmail(actingAdminEmail);
+
+    if (!normalized) throw new Error('USER_NOT_FOUND');
+    if (normalized === acting) throw new Error('CANNOT_DELETE_SELF');
+
+    const user = await this.findUserByEmail(normalized);
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    if (resolveUserRole(normalized) === 'admin') {
+      throw new Error('CANNOT_DELETE_ADMIN');
+    }
+
+    await dbService.deleteUser(normalized);
+    await dbService.deleteUser(user.email).catch(() => undefined);
   }
 }
 
